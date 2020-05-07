@@ -10,6 +10,10 @@ Accepts POST for bin file upload. Intended for ESP8266, so it checks the entry a
 * If it's < 1MB, then use `make ota` which will compile the app bound for app1 with the modified entry address.
 * But they haven't modified the `CMakeLists.txt` file to do the same.
 
+Otherwise, you get this error;
+```
+esp_ota_ops: **Important**: The OTA binary link data is error, please refer to document <<ESP8266_RTOS_SDK/examples/system/ota/README.md>> for how to generate OTA binaries
+```
 In order to use OTA on 1MB ESP8266, replace lines 96,97 in `components/esp8266/CMakeLists.txt` from
 ```
 partition_table_get_partition_info(app_offset "--partition-boot-default" "offset")
