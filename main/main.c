@@ -47,27 +47,6 @@ int sse_logging_putchar(int chr) {
 	return old_function( chr );
 }
 
-esp_err_t check_entry_addr(char *data, const esp_partition_t *partition) {
-    esp_image_header_t check_header; 
-    esp_err_t err = ESP_OK;
-
-    memcpy(&check_header, data, sizeof(esp_image_header_t));
-    int32_t entry = check_header.entry_addr - 0x40200010;
-
-    if (check_header.magic != 0xE9) {
-        ESP_LOGE(TAG, "OTA image has invalid magic byte (expected 0xE9, saw 0x%x)", check_header.magic);
-        err = ESP_ERR_OTA_VALIDATE_FAILED;
-    }
-    else if ( (entry < partition->address)  ||
-        (entry > partition->address + partition->size) ) {
-        ESP_LOGE(TAG, "OTA binary start entry 0x%x, partition start from 0x%x to 0x%x", entry, 
-            partition->address, partition->address + partition->size);
-        err = ESP_ERR_OTA_VALIDATE_FAILED;
-    }
-
-    return err;
-}
-
 esp_err_t read_from_client (int client_fd) {
     char buffer[OTA_BUFF_SIZE] = {0};
     int len;
@@ -137,7 +116,6 @@ esp_err_t read_from_client (int client_fd) {
         else if (    strncmp(method_start_p, "POST", strlen("POST")) == 0 && 
                      strncmp(uri_start_p, "/ ", strlen("/ ")) == 0          ) {
 
-            bool is_image_header_checked = false;
             int content_length;                
             int content_received = 0;
 
@@ -166,62 +144,66 @@ esp_err_t read_from_client (int client_fd) {
                 err = esp_ota_begin(update_partition, OTA_SIZE_UNKNOWN, &ota_handle);
                 if (err != ESP_OK) {
                     ESP_LOGE(TAG, "Error esp_ota_begin()"); 
-                } else {
-                    ESP_LOGI(TAG, "Writing to partition subtype %d at offset 0x%x",
-                        update_partition->subtype, update_partition->address);
-                }
+                } 
             }
 
+            len = body_part_len;
+            char *buffer_p = body_start_p;
+            bool is_image_header_checked = false;
+            bool more_content = true;
 
-// ***************** Save this to a small buffer and then check it in the do {} loop??
-// ************ Could if you only received 4 bytes, then in the do {} loop, add to it with the 
-// ************* latest read data
+            while (more_content) {
 
+                // Magic byte [0xE9] will be checked before writing to partition
+                //  Entry address isn't checked until after everything has been written
+                //  so check it first (need 8 bytes)
+                if (err == ESP_OK && len > sizeof(esp_image_header_t) && !is_image_header_checked) {
+                    esp_image_header_t check_header; 
+                    memcpy(&check_header, buffer_p, sizeof(esp_image_header_t));
+                    int32_t entry = check_header.entry_addr - 0x40200010;
 
-
-            // Magic byte [0xE9] will be checked before writing to partition
-            //  Entry address isn't checked until after everything has been written
-            //  so check it first (need 8 bytes)
-            if (err == ESP_OK && body_part_len > sizeof(esp_image_header_t)) {
-                err = check_entry_addr(body_start_p, update_partition);
-                is_image_header_checked = true;
-            }
-
-            if (err == ESP_OK) {
-                err = esp_ota_write(ota_handle, body_start_p, body_part_len);
-            }
-            content_received += body_part_len;
-
-            do {
-                if (content_length == 0) {
-                    // shouldn't happen. but if it does, you don't want to block on 'read'
-                    err = ESP_ERR_INVALID_SIZE;
-                    break;
-                }
-                len = read(client_fd, buffer, OTA_BUFF_SIZE);
-
-                if (len > 0) {
-
-                    if (err == ESP_OK && !is_image_header_checked) {
-                        err = check_entry_addr(buffer, update_partition);
-                        is_image_header_checked = true;
+                    if (check_header.magic != 0xE9) {
+                        ESP_LOGE(TAG, "OTA image has invalid magic byte (expected 0xE9, saw 0x%x)", check_header.magic);
+                        err = ESP_ERR_OTA_VALIDATE_FAILED;
                     }
-
-                    // if no previous errors, continue to write. otherwise, just read the incoming data until it completes
-                    //  and send the HTTP error response back. stopping the connection early causes the client to
-                    //  display a ERROR CONNECTION CLOSED response instead of a meaningful error
+                    else if ( (entry < update_partition->address)  ||
+                        (entry > update_partition->address + update_partition->size) ) {
+                        ESP_LOGE(TAG, "OTA binary start entry 0x%x, partition start from 0x%x to 0x%x", entry, 
+                            update_partition->address, update_partition->address + update_partition->size);
+                        err = ESP_ERR_OTA_VALIDATE_FAILED;
+                    }
+                    
                     if (err == ESP_OK) {
-                        err = esp_ota_write(ota_handle, buffer, len);
+                        ESP_LOGI(TAG, "Writing to partition subtype %d at offset 0x%x",
+                            update_partition->subtype, update_partition->address);
                     }
-                    content_received += len;
+                    is_image_header_checked = true;
                 }
-                else if (len < 0) {
-                    ESP_LOGE(TAG, "Error: recv data error! err: %s", strerror(errno));
+
+                // if no previous errors, continue to write. otherwise, just read the incoming data until it completes
+                //  and send the HTTP error response back. stopping the connection early causes the client to
+                //  display an ERROR CONNECTION CLOSED response instead of a meaningful error
+                if (err == ESP_OK) {
+                    err = esp_ota_write(ota_handle, buffer_p, len);
                 }
-            } while (len > 0 && content_received < content_length);
+                content_received += len;
+
+                if (content_received < content_length) {
+                    len = read(client_fd, buffer, OTA_BUFF_SIZE);
+                    buffer_p = buffer;
+                    if (len < 0) {
+                        ESP_LOGE(TAG, "Error: recv data error! err: %s", strerror(errno));
+                        break;
+                    }
+                }
+                else {
+                    more_content = false;
+                }
+            } // end while(). no more content to read
+
+            ESP_LOGI(TAG, "Binary transferred finished: %d bytes", content_received);
 
             if (err == ESP_OK) {
-                ESP_LOGI(TAG, "Binary transferred finished: %d bytes", content_received);
                 err = esp_ota_end(ota_handle);
                 if (err == ESP_OK) {
                     esp_ota_set_boot_partition(update_partition);
@@ -236,7 +218,7 @@ esp_err_t read_from_client (int client_fd) {
             if (err == ESP_OK) {
                 len = sprintf(buffer, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
             } else {
-                len = sprintf(buffer, "HTTP/1.1 400 Bad File\r\nContent-Length: 0\r\n\r\n");
+                len = sprintf(buffer, "HTTP/1.1 400 Bad Update\r\nContent-Length: 0\r\n\r\n");
             }
             send(client_fd, buffer, len, 0);
 
