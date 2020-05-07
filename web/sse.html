@@ -1,0 +1,39 @@
+<!DOCTYPE html> 
+<html> 
+<head runat="server">
+    <title>Server Sent Events</title>
+</head>
+<script>
+function initialize() {
+    if (window.EventSource == undefined) {
+        document.getElementById('OutputDiv').innerHTML = "Your browser doesn't support Server Side Events."; 
+        return;
+    }
+    var source = new EventSource('event');
+    source.onopen = function (event) {
+        document.getElementById('OutputDiv').innerHTML += 'Connection Opened.<br>';
+    };
+    source.onerror = function (event) {
+        if (event.eventPhase == EventSource.CLOSED) {  
+            document.getElementById('OutputDiv').innerHTML += 'Connection Closed.<br>';  
+        }
+    };
+    source.onmessage = function (event) { 
+       var data_str;
+       data_str = event.data.replace("[0;31m", "<span style='color:red'>");
+       data_str = data_str.replace("[0;32m", "<span style='color:green'>");
+       data_str = data_str.replace("[0;33m", "<span style='color:yellow'>");
+       data_str = data_str.replace("[0m", "</span>");
+       var objDiv = document.getElementById('OutputDiv');
+       objDiv.innerHTML += data_str + '<br>';
+       objDiv.scrollTop = objDiv.scrollHeight; 
+    };
+}
+</script>
+<body  onload="initialize()"> 
+    <form id="form1" runat="server">
+        <div id="OutputDiv" style="font: 0.6em courier; overflow-y: auto; height:400px;">
+        </div>
+    </form>
+</body>
+</html>
