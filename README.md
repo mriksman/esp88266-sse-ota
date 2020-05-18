@@ -1,7 +1,7 @@
 # ESP8266 HTTP Server Side Events and Minimal OTA
 Uses BSD Sockets API to listen for incoming connections
 
-Accepts `text/event-stream` from client
+Accepts `text/event-stream` from client and sends `event:progress` updates to the client.
 
 Uses `esp_log_set_putchar` to send console log to HTTP client using SSE
 
@@ -30,7 +30,23 @@ else()
 endif()
 message(STATUS "Using partition located at offset " ${app_offset} " with size " ${app_size})
 ```
-And in your project's `CmakeLists.txt` file add the following
+And in your project's **main** `CmakeLists.txt` file (the program that will end up in `OTA_1`) add the following
 ```
 set(PARTITION_NAME app1)
 ```
+where `app1` is the label of your `OTA_1` partition defined in your partitions csv.
+
+ESP App Description
+--------------------
+This code will check the first 8 bytes received to ensure
+1. It has a valid Magic Byte of `0xE9` as the first byte
+2. It has the correct entry address (as described above)
+
+In order for this to work, ESP8266 RTOS SDK had the modifications made in commit `525c34b`. However, the linker script has the `.rodata .desc` being saved in the wrong memory area. For the code to work, the `esp_app_desc` data must be shifted into the `.text` section.
+
+Open file `components/esp8266/ld/esp8266.project.ld.in` and move the following lines from 200 to line 168;
+```
+*(.rodata_desc .rodata_desc.*)
+*(.rodata_custom_desc .rodata_custom_desc.*) 
+```
+
