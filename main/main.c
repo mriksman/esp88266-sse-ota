@@ -244,7 +244,6 @@ esp_err_t read_from_client (int client_fd) {
 
                 remaining -= len;
           
-
                 if (remaining != 0) {
                     len = read(client_fd, buffer, OTA_BUFF_SIZE);
                     buffer_p = buffer;
@@ -422,8 +421,26 @@ void app_main(void)
     }
 */
 
+    esp_err_t err;
 
-    led_status = led_status_init(2, false);
+    nvs_handle lights_config_handle;
+    err = nvs_open("lights", NVS_READWRITE, &lights_config_handle);
+    if (err == ESP_OK) {
+        // Status LED
+        uint8_t status_led_gpio = 0;
+        err = nvs_get_u8(lights_config_handle, "status_led", &status_led_gpio); 
+        if (err == ESP_OK) {
+            led_status = led_status_init(status_led_gpio, false);   //don't care about inverted or not...
+        }
+        else {
+            ESP_LOGW(TAG, "error nvs_get_u8 status_led err %d", err);
+        }
+        nvs_close(lights_config_handle);
+    }
+    else {
+        ESP_LOGE(TAG, "nvs_open err %d ", err);
+    }
+            
     led_status_set(led_status, &running);
 
 
